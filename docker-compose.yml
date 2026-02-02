@@ -1,0 +1,352 @@
+networks:
+  server-net:
+    driver: bridge
+    name: server-net
+
+volumes:
+  model-cache:
+
+services:
+  # --- Reverse Proxy ---
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - '80:80'    # Public HTTP Port
+      - '443:443'  # Public HTTPS Port
+      - '81:81'    # Admin UI
+    volumes:
+      - '/server/data/nginx:/data'
+      - '/server/data/nginx/letsencrypt:/etc/letsencrypt'
+    networks:
+      - server-net
+
+  # --- Dashboards & Logs ---
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - HOMEPAGE_DISABLE_HOST_CHECK=true
+      - HOMEPAGE_ALLOWED_HOSTS=192.168.1.250:3000,100.108.46.67:3000
+    volumes:
+      - '/server/data/homepage:/app/config'
+      - '/var/run/docker.sock:/var/run/docker.sock:ro'
+    ports:
+      - '3000:3000'
+    networks:
+      - server-net
+
+  # --- Media Stack (Arr Suite) ---
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    ports:
+      - "9696:9696"
+    volumes:
+      - '/server/data/prowlarr:/config'
+    networks:
+      - server-net
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+      - WEBUI_PORT=8080
+    volumes:
+      - '/server/data/qbittorrent:/config'
+      - '/server:/data'
+    ports:
+      - '6881:6881'
+      - '6881:6881/udp'
+      - '8080:8080'
+    networks:
+      - server-net
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - '/server/data/sonarr:/config'
+      - '/server:/data'
+    ports:
+      - "8989:8989"
+    networks:
+      - server-net
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - '/server/data/radarr:/config'
+      - '/server:/data'
+    ports:
+      - "7878:7878"
+    networks:
+      - server-net
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - '/server/data/bazarr:/config'
+      - '/server:/data'
+    ports:
+      - '6767:6767'
+    networks:
+      - server-net
+
+  # --- Media Server & Requests ---
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - '/server/data/jellyfin/config:/config'
+      - '/server:/data'
+    ports:
+      - '8096:8096'
+      - '8920:8920'
+      - "1900:1900/udp"
+      - "7359:7359/udp"
+    networks:
+      - server-net
+
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: protonvpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=openvpn
+      - SERVER_COUNTRIES=Japan # Changed to Netherlands for better speed
+      - FREE_ONLY=on
+      - TZ=Asia/Kolkata
+      - DNS_KEEP_NAMESERVER=on
+    env_file:
+      - ./env/protonvpn.env.example
+    volumes:
+      - /server/data/protonvpn/gluetun:/gluetun
+    ports:
+      # Port for Jellyseerr
+      - "5055:5055"
+    networks:
+      # This connects the VPN container to your other apps
+      - server-net
+    restart: unless-stopped
+
+  jellyseerr:
+    image: fallenbagel/jellyseerr:latest
+    container_name: jellyseerr
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    volumes:
+      - '/server/data/jellyseerr:/app/config'
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+      - LOG_LEVEL=info
+    restart: unless-stopped
+
+
+  # --- Utilities & Monitoring ---
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - '/var/run/docker.sock:/var/run/docker.sock'
+      - '/server/data/portainer:/data'
+    ports:
+      - '9443:9443'
+    networks:
+      - server-net
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - '/server/data/uptime-kuma:/app/data'
+    ports:
+      - '3001:3001'
+    networks:
+      - server-net
+
+  netdata:
+    image: netdata/netdata
+    container_name: netdata
+    restart: unless-stopped
+    hostname: your-server-name
+    ports:
+      - '19999:19999'
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - server-net
+
+  healthcheck-pinger:
+    image: curlimages/curl
+    container_name: healthcheck-pinger
+    restart: unless-stopped
+    command: /bin/sh -c "while true; do curl -fsS -m 10 --retry 5 -o /dev/null https://hc-ping.com/e52c56c4-3fe0-4241-b05e-58d3756a8745; sleep 300; done"
+    networks:
+      - server-net
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --schedule "0 0 4 * * *" --cleanup
+    networks:
+      - server-net
+
+  # --- Other Applications ---
+  minecraft:
+    image: itzg/minecraft-server
+    container_name: minecraft
+    restart: unless-stopped
+    environment:
+      - EULA=TRUE
+      - TZ=Asia/Kolkata
+      - VERSION=1.21.8
+      - SERVER_NAME=mcsurvival
+      - ONLINE_MODE=FALSE
+
+      # Memory settings
+      - MEMORY=8G
+
+      # Autopause settings
+      - ENABLE_AUTOPAUSE=TRUE
+      - AUTOPAUSE_TIMEOUT_EST=300
+      - AUTOPAUSE_TIMEOUT_INIT=60
+      - AUTOPAUSE_TIMEOUT_KN=20
+      - MAX_TICK_TIME=-1   # disables watchdog so autopause won’t kill server
+
+    volumes:
+      - /server/data/minecraft:/data
+    ports:
+      - "25565:25565"
+    networks:
+      - server-net
+
+  flaresolverr:
+    image: flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+    networks:
+      - server-net
+
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:v2.3.1
+    container_name: immich-server
+    depends_on:
+      - immich-db
+      - immich-redis
+    env_file:
+      - ./env/immich.env.example
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+      - DB_USERNAME=${IMMICH_DB_USER}
+      - DB_PASSWORD=${IMMICH_DB_PASSWORD}
+      - DB_DATABASE_NAME=${IMMICH_DB_NAME}
+      - DB_HOSTNAME=immich-db
+      - DB_PORT=5432
+      - REDIS_HOSTNAME=immich-redis
+    volumes:
+      - /data/config/immich:/config        # Immich app config
+      - /media/myfiles/Media:/usr/src/app/external_media:ro   # Media library (read-only)
+      - /data/immich/upload:/usr/src/app/upload               # Writable uploads
+    ports:
+      - "2283:2283"  # Expose Immich server port
+    restart: unless-stopped
+    networks:
+      - server-net
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:v2.3.1
+    container_name: immich-machine-learning
+    depends_on:
+      - immich-server
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - model-cache:/cache
+    restart: unless-stopped
+    networks:
+      - server-net
+
+  immich-redis:
+    image: redis:7-alpine
+    container_name: immich-redis
+    restart: unless-stopped
+    networks:
+      - server-net
+
+  immich-db:
+    image: tensorchord/pgvecto-rs:pg15-v0.2.0
+    container_name: immich-db
+    restart: always
+    env_file:
+      - ./env/immich.env.example
+    environment:
+      - POSTGRES_PASSWORD=${IMMICH_DB_PASSWORD}
+      - POSTGRES_USER=${IMMICH_DB_USER}
+      - POSTGRES_DB=${IMMICH_DB_NAME}
+    volumes:
+      - /data/config/immich-database:/var/lib/postgresql/data
+    networks:
+      - server-net
