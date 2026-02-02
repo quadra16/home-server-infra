@@ -234,7 +234,12 @@ services:
     image: curlimages/curl
     container_name: healthcheck-pinger
     restart: unless-stopped
-    command: /bin/sh -c "while true; do curl -fsS -m 10 --retry 5 -o /dev/null https://hc-ping.com/e52c56c4-3fe0-4241-b05e-58d3756a8745; sleep 300; done"
+    env_file:
+      - ./env/common.env.example
+    environment:
+      - HEALTHCHECK_URL=${HEALTHCHECK_URL}
+    # Use an env var for the ping URL so tokens are not embedded in compose
+    command: /bin/sh -c 'while true; do if [ -n "${HEALTHCHECK_URL}" ]; then curl -fsS -m 10 --retry 5 -o /dev/null "${HEALTHCHECK_URL}" || true; fi; sleep 300; done'
     networks:
       - server-net
 
