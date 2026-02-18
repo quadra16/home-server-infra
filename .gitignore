@@ -1,0 +1,25 @@
+# Real env files (only .example files are committed)
+.env
+env/*.env
+!env/*.env.example
+
+# DuckDNS token
+/server/data/duckdns/
+
+# Backups
+backups/
+
+# NPM / service data
+/server/data/
+/data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

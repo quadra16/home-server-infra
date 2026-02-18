@@ -9,16 +9,33 @@ volumes:
 services:
   # --- Reverse Proxy ---
   nginx-proxy-manager:
-    image: 'jc21/nginx-proxy-manager:latest'
+    image: "jc21/nginx-proxy-manager:latest"
     container_name: nginx-proxy-manager
     restart: unless-stopped
     ports:
-      - '80:80'    # Public HTTP Port
-      - '443:443'  # Public HTTPS Port
-      - '81:81'    # Admin UI
+      - "80:80" # HTTP
+      - "443:443" # HTTPS
+      - "81:81" # NPM Admin UI
     volumes:
-      - '/server/data/nginx:/data'
-      - '/server/data/nginx/letsencrypt:/etc/letsencrypt'
+      - "/server/data/nginx:/data"
+      - "/server/data/nginx/letsencrypt:/etc/letsencrypt"
+    networks:
+      - server-net
+
+  # --- DNS ---
+  # Keeps DuckDNS domain pointing to the Tailscale IP.
+  # All services are accessed via *.yourdomain.duckdns.org subdomains,
+  # routed through NPM, and secured with a wildcard Let's Encrypt cert.
+  duckdns:
+    image: curlimages/curl
+    container_name: duckdns
+    restart: unless-stopped
+    env_file:
+      - ./env/duckdns.env.example
+    command: >-
+      /bin/sh -c "while true; do
+      curl -s \"https://www.duckdns.org/update?domains=$${DUCKDNS_SUBDOMAIN}&token=$$TOKEN&ip=$${TAILSCALE_IP}\";
+      echo; sleep 300; done"
     networks:
       - server-net
 
@@ -31,12 +48,11 @@ services:
       - PUID=1000
       - PGID=1000
       - HOMEPAGE_DISABLE_HOST_CHECK=true
-      - HOMEPAGE_ALLOWED_HOSTS=192.168.1.250:3000,100.108.46.67:3000
+      - HOMEPAGE_ALLOWED_HOSTS=*
     volumes:
-      - '/server/data/homepage:/app/config'
-      - '/var/run/docker.sock:/var/run/docker.sock:ro'
-    ports:
-      - '3000:3000'
+      - "/server/data/homepage:/app/config"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    # Port exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -49,10 +65,9 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Asia/Kolkata
-    ports:
-      - "9696:9696"
     volumes:
-      - '/server/data/prowlarr:/config'
+      - "/server/data/prowlarr:/config"
+    # Port exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -66,12 +81,12 @@ services:
       - TZ=Asia/Kolkata
       - WEBUI_PORT=8080
     volumes:
-      - '/server/data/qbittorrent:/config'
-      - '/server:/data'
+      - "/server/data/qbittorrent:/config"
+      - "/server:/data"
     ports:
-      - '6881:6881'
-      - '6881:6881/udp'
-      - '8080:8080'
+      - "6881:6881" # Torrent port — keep exposed
+      - "6881:6881/udp"
+      # Web UI (8080) exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -84,10 +99,9 @@ services:
       - PGID=1000
       - TZ=Asia/Kolkata
     volumes:
-      - '/server/data/sonarr:/config'
-      - '/server:/data'
-    ports:
-      - "8989:8989"
+      - "/server/data/sonarr:/config"
+      - "/server:/data"
+    # Port exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -100,10 +114,9 @@ services:
       - PGID=1000
       - TZ=Asia/Kolkata
     volumes:
-      - '/server/data/radarr:/config'
-      - '/server:/data'
-    ports:
-      - "7878:7878"
+      - "/server/data/radarr:/config"
+      - "/server:/data"
+    # Port exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -116,10 +129,9 @@ services:
       - PGID=1000
       - TZ=Asia/Kolkata
     volumes:
-      - '/server/data/bazarr:/config'
-      - '/server:/data'
-    ports:
-      - '6767:6767'
+      - "/server/data/bazarr:/config"
+      - "/server:/data"
+    # Port exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -133,13 +145,12 @@ services:
       - PGID=1000
       - TZ=Asia/Kolkata
     volumes:
-      - '/server/data/jellyfin/config:/config'
-      - '/server:/data'
+      - "/server/data/jellyfin/config:/config"
+      - "/server:/data"
     ports:
-      - '8096:8096'
-      - '8920:8920'
-      - "1900:1900/udp"
-      - "7359:7359/udp"
+      # Web UI (8096) exposed via NPM reverse proxy
+      - "1900:1900/udp" # DLNA discovery
+      - "7359:7359/udp" # Jellyfin client discovery
     networks:
       - server-net
 
@@ -153,7 +164,7 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER=protonvpn
       - VPN_TYPE=openvpn
-      - SERVER_COUNTRIES=Japan # Changed to Netherlands for better speed
+      - SERVER_COUNTRIES=Japan
       - FREE_ONLY=on
       - TZ=Asia/Kolkata
       - DNS_KEEP_NAMESERVER=on
@@ -161,11 +172,8 @@ services:
       - ./env/protonvpn.env.example
     volumes:
       - /server/data/protonvpn/gluetun:/gluetun
-    ports:
-      # Port for Jellyseerr
-      - "5055:5055"
+    # Jellyseerr port — exposed via NPM reverse proxy
     networks:
-      # This connects the VPN container to your other apps
       - server-net
     restart: unless-stopped
 
@@ -176,14 +184,13 @@ services:
     depends_on:
       - gluetun
     volumes:
-      - '/server/data/jellyseerr:/app/config'
+      - "/server/data/jellyseerr:/app/config"
     environment:
       - PUID=1000
       - PGID=1000
       - TZ=Asia/Kolkata
       - LOG_LEVEL=info
     restart: unless-stopped
-
 
   # --- Utilities & Monitoring ---
   portainer:
@@ -193,11 +200,10 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - '/etc/localtime:/etc/localtime:ro'
-      - '/var/run/docker.sock:/var/run/docker.sock'
-      - '/server/data/portainer:/data'
-    ports:
-      - '9443:9443'
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "/server/data/portainer:/data"
+    # Port exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -206,9 +212,8 @@ services:
     container_name: uptime-kuma
     restart: unless-stopped
     volumes:
-      - '/server/data/uptime-kuma:/app/data'
-    ports:
-      - '3001:3001'
+      - "/server/data/uptime-kuma:/app/data"
+    # Port exposed via NPM reverse proxy
     networks:
       - server-net
 
@@ -216,9 +221,7 @@ services:
     image: netdata/netdata
     container_name: netdata
     restart: unless-stopped
-    hostname: your-server-name
-    ports:
-      - '19999:19999'
+    # Port exposed via NPM reverse proxy
     cap_add:
       - SYS_PTRACE
     security_opt:
@@ -238,7 +241,6 @@ services:
       - ./env/common.env.example
     environment:
       - HEALTHCHECK_URL=${HEALTHCHECK_URL}
-    # Use an env var for the ping URL so tokens are not embedded in compose
     command: /bin/sh -c 'while true; do if [ -n "${HEALTHCHECK_URL}" ]; then curl -fsS -m 10 --retry 5 -o /dev/null "${HEALTHCHECK_URL}" || true; fi; sleep 300; done'
     networks:
       - server-net
@@ -264,17 +266,12 @@ services:
       - VERSION=1.21.8
       - SERVER_NAME=mcsurvival
       - ONLINE_MODE=FALSE
-
-      # Memory settings
       - MEMORY=8G
-
-      # Autopause settings
       - ENABLE_AUTOPAUSE=TRUE
       - AUTOPAUSE_TIMEOUT_EST=300
       - AUTOPAUSE_TIMEOUT_INIT=60
       - AUTOPAUSE_TIMEOUT_KN=20
-      - MAX_TICK_TIME=-1   # disables watchdog so autopause won’t kill server
-
+      - MAX_TICK_TIME=-1
     volumes:
       - /server/data/minecraft:/data
     ports:
@@ -310,11 +307,10 @@ services:
       - DB_PORT=5432
       - REDIS_HOSTNAME=immich-redis
     volumes:
-      - /data/config/immich:/config        # Immich app config
-      - /media/myfiles/Media:/usr/src/app/external_media:ro   # Media library (read-only)
-      - /data/immich/upload:/usr/src/app/upload               # Writable uploads
-    ports:
-      - "2283:2283"  # Expose Immich server port
+      - /data/config/immich:/config
+      - /media/myfiles/Media:/usr/src/app/external_media:ro
+      - /data/immich/upload:/usr/src/app/upload
+    # Port exposed via NPM reverse proxy
     restart: unless-stopped
     networks:
       - server-net

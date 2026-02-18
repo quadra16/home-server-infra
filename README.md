@@ -1,49 +1,97 @@
 # Home Server Infrastructure
 
-Opinionated Docker Compose configuration and helper scripts to run a
-home media, photo management, and monitoring stack on a single host.
+Self-hosted media, photo management, and monitoring stack — secured behind [Tailscale](https://tailscale.com) with HTTPS via [Nginx Proxy Manager](https://nginxproxymanager.com) and a free [DuckDNS](https://www.duckdns.org) domain.
 
-This repo contains:
+## Services
 
-- `docker-compose.yml` — the full stack (reverse proxy, media apps, Immich, monitoring, VPN)
-- `env/*.example` — example environment files. Copy and edit into `env/*.env` or `.env` before starting.
-- `scripts/` — helper scripts: `backup.sh`, `restore.sh`, `update.sh`
-- `docs/` — architecture, networking, and storage notes
+| Service         | Description                        | Subdomain        |
+| --------------- | ---------------------------------- | ---------------- |
+| **Jellyfin**    | Media streaming server             | `jellyfin.*`     |
+| **Sonarr**      | TV show management                 | `sonarr.*`       |
+| **Radarr**      | Movie management                   | `radarr.*`       |
+| **Bazarr**      | Subtitle management                | `bazarr.*`       |
+| **Prowlarr**    | Indexer manager                    | `prowlarr.*`     |
+| **qBittorrent** | Torrent client                     | `qbit.*`         |
+| **Jellyseerr**  | Media request management (via VPN) | `jellyseerr.*`   |
+| **Immich**      | Self-hosted photo management       | `immich.*`       |
+| **Portainer**   | Docker container management        | `portainer.*`    |
+| **Uptime Kuma** | Service uptime monitoring          | `uptime.*`       |
+| **Netdata**     | System performance monitoring      | `netdata.*`      |
+| **Homepage**    | Service dashboard                  | `home.*`         |
+| **Minecraft**   | Game server with auto-pause        | Direct: `:25565` |
 
-Quick start
+## Architecture
 
-1. Copy and secure env files:
+```
+Tailscale device
+  → *.yourdomain.duckdns.org (resolves to Tailscale IP)
+    → Nginx Proxy Manager (TLS termination + subdomain routing)
+      → Docker containers on server-net bridge network
+```
 
-	- Copy `env/common.env.example` to `env/common.env` and set `HEALTHCHECK_URL` if you use an external ping service.
-	- Copy `env/immich.env.example` to `env/immich.env` and set strong DB credentials.
-	- Copy `env/protonvpn.env.example` to `env/protonvpn.env` if you use ProtonVPN credentials with `gluetun`.
+- **Zero-trust access** — only Tailscale-authenticated devices can reach the server
+- **Wildcard HTTPS** — Let's Encrypt certificate via DNS-01 challenge
+- **No exposed ports** — all HTTP services are behind NPM; only torrent, Minecraft, and discovery ports are mapped to host
 
-2. Start the stack:
+## Quick Start
 
-	```bash
-	docker compose up -d
-	```
+1. **Install Tailscale** on the host and all client devices
 
-3. Inspect status:
+2. **Set up DuckDNS:**
+   - Create a free domain at [duckdns.org](https://www.duckdns.org)
+   - Point it to your Tailscale IP (`tailscale ip -4`)
 
-	```bash
-	docker compose ps
-	```
+3. **Configure env files:**
 
-Backups
+   ```bash
+   cp env/duckdns.env.example env/duckdns.env     # DuckDNS token + subdomain
+   cp env/immich.env.example env/immich.env         # Immich DB credentials
+   cp env/protonvpn.env.example env/protonvpn.env   # VPN credentials
+   cp env/common.env.example env/common.env         # Healthcheck URL (optional)
+   ```
 
-- Use `./scripts/backup.sh` to create DB dumps and tarballs of configured host paths. Backups are saved under `backups/` within the repo (adjust in the script if you prefer a different location).
-- Use `./scripts/restore.sh <backup-folder>` to restore. Test restores in a safe environment before relying on them.
+4. **Start the stack:**
 
-Updating
+   ```bash
+   docker compose up -d
+   ```
 
-- Run `./scripts/update.sh` to pull images, recreate the stack, and prune unused images.
+5. **Configure NPM** at `http://<tailscale-ip>:81`:
+   - Add a wildcard SSL certificate (`*.yourdomain.duckdns.org`) using DuckDNS DNS challenge
+   - Add proxy hosts for each service (see [docs/networking.md](docs/networking.md) for the full table)
 
-Security and secrets
+## Directory Structure
 
-- Do NOT commit real credentials to source control. Keep `env/*.env` files out of the repo or in a secrets manager.
-- `docker-compose.yml` was sanitized to remove embedded tokens; healthchecks and other secrets should be provided via env files.
+```
+├── docker-compose.yml          # Full stack definition
+├── env/
+│   ├── common.env.example      # Timezone, PUID/PGID, healthcheck URL
+│   ├── duckdns.env.example     # DuckDNS token and subdomain
+│   ├── immich.env.example      # Immich database credentials
+│   └── protonvpn.env.example   # VPN credentials for gluetun
+└── docs/
+    ├── architecture.md         # Service groups and access model
+    ├── networking.md           # Subdomain routing and port mapping
+    └── storage.md              # Volumes and backup guidance
+```
 
-Where to go next
+## Updating
 
-- Read `docs/architecture.md`, `docs/networking.md`, and `docs/storage.md` for operational notes and recommended practices.
+Images are automatically updated daily by **Watchtower**. To manually update:
+
+```bash
+docker compose pull && docker compose up -d && docker image prune -f
+```
+
+## Security
+
+- No credentials are committed — secrets are managed via `env/*.env` files (excluded by `.gitignore`)
+- All HTTP traffic is encrypted with TLS via NPM
+- Services are only accessible through the Tailscale network
+- DuckDNS domain resolves to a Tailscale IP — unreachable from the public internet
+
+## Docs
+
+- [Architecture Overview](docs/architecture.md)
+- [Networking & Routing](docs/networking.md)
+- [Storage & Backups](docs/storage.md)
